@@ -2,8 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
+import { connectDB } from './config/db.js';
+
 // Load environment variables (like secret keys) from a .env file
 dotenv.config();
+
+// Connect to the database
+connectDB();
+
+import authRoutes from './routes/auth.js';
 
 // Initialize the Express application
 const app = express();
@@ -13,6 +20,9 @@ app.use(cors());
 
 // Middleware: Allows our backend to understand JSON data sent in requests
 app.use(express.json());
+
+// Mount the authentication routes
+app.use('/api/auth', authRoutes);
 
 // A simple health check route
 app.get('/health', (req, res) => {
