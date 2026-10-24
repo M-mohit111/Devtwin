@@ -11,6 +11,7 @@ dotenv.config();
 connectDB();
 
 import authRoutes from './routes/auth.js';
+import repoRoutes from './routes/repo.js';
 
 // Initialize the Express application
 const app = express();
@@ -21,8 +22,9 @@ app.use(cors());
 // Middleware: Allows our backend to understand JSON data sent in requests
 app.use(express.json());
 
-// Mount the authentication routes
+// Mount the routes
 app.use('/api/auth', authRoutes);
+app.use('/api/repos', repoRoutes);
 
 // A simple health check route
 app.get('/health', (req, res) => {

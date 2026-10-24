@@ -6,7 +6,7 @@ const router = express.Router();
 
 // Step 1: The React frontend will send the user to this URL to start the login process
 router.get('/github', (req, res) => {
-  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&redirect_uri=http://localhost:5000/api/auth/github/callback&scope=read:user user:email`;
+  const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&redirect_uri=http://localhost:5000/api/auth/github/callback&scope=read:user user:email repo`;
   res.redirect(githubAuthUrl);
 });
 
@@ -59,7 +59,14 @@ router.get('/github/callback', async (req, res) => {
         name: githubUser.name || githubUser.login,
         avatarUrl: githubUser.avatar_url,
         bio: githubUser.bio,
+        accessToken: accessToken,
       });
+    } else {
+      user.accessToken = accessToken;
+      user.name = githubUser.name || githubUser.login;
+      user.avatarUrl = githubUser.avatar_url;
+      user.bio = githubUser.bio;
+      await user.save();
     }
 
     // 2d. Create our own DevTwin JWT Token so the frontend knows who is logged in

@@ -21,6 +21,9 @@ const userSchema = new mongoose.Schema(
     bio: {
       type: String,
     },
+    accessToken: {
+      type: String,
+    },
   },
   { timestamps: true } // Automatically adds createdAt and updatedAt
 );
