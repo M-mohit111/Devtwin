@@ -116,3 +116,72 @@ export function rankChunksBySimilarity(queryEmbedding, chunks, topK = 4) {
 
   return scored.slice(0, topK);
 }
+
+/**
+ * Generates an interview-like answer in the developer's voice using Gemini 2.5 Flash and RAG context.
+ */
+export async function generateChatResponse(user, question, relevantChunks) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not defined');
+  }
+
+  // Format the code context cleanly
+  const codeContext = (relevantChunks || [])
+    .map((chunk, i) => {
+      const projName = chunk.project?.name || chunk.projectName || 'Project';
+      return `--- [Code Snippet ${i + 1}] File: ${chunk.filePath} (${projName}) ---\n${chunk.chunkContent}`;
+    })
+    .join('\n\n');
+
+  const prompt = `You are the AI Twin of software developer ${user.name || user.username} (@${user.username}).
+You are speaking directly to a recruiter, hiring manager, or technical interviewer who is reviewing ${user.name || user.username}'s portfolio.
+
+CORE INSTRUCTIONS:
+1. Speak in the first person ("In my project...", "I designed...", "I implemented...").
+2. Sound like a knowledgeable, articulate, and friendly engineer in a technical interview.
+3. Directly ground your technical explanations in the actual code snippets provided below.
+4. Mention the file names or projects (e.g. "In my Payment-Ledger-System...") so the recruiter knows you actually built it.
+5. If the question asks for an opinion or general greeting, respond warmly and guide them to your projects.
+
+--- MY ACTUAL CODE & PROJECTS CONTEXT ---
+${codeContext || 'No specific code snippets found for this query.'}
+--- END CODE CONTEXT ---
+
+QUESTION:
+"${question}"
+
+YOUR ANSWER (as ${user.name || user.username}):`;
+
+  const modelsToTry = ['gemini-flash-lite-latest', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  let lastError = null;
+
+  for (const model of modelsToTry) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply) return reply;
+      } else {
+        const errorText = await response.text();
+        lastError = new Error(`Model ${model} returned ${response.status}: ${errorText}`);
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('All Gemini text generation models failed');
+}
+

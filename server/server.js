@@ -12,6 +12,7 @@ connectDB();
 
 import authRoutes from './routes/auth.js';
 import repoRoutes from './routes/repo.js';
+import chatRoutes from './routes/chat.js';
 
 // Initialize the Express application
 const app = express();
@@ -25,6 +26,7 @@ app.use(express.json());
 // Mount the routes
 app.use('/api/auth', authRoutes);
 app.use('/api/repos', repoRoutes);
+app.use('/api/chat', chatRoutes);
 
 // A simple health check route
 app.get('/health', (req, res) => {

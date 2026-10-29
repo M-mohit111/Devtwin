@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -15,11 +15,18 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [embeddingProjectId, setEmbeddingProjectId] = useState(null);
 
-  // State for Semantic Search Playground
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState([]);
-  const [hasSearched, setHasSearched] = useState(false);
+  // State for AI Twin Chat
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatting, setIsChatting] = useState(false);
+  const chatBottomRef = useRef(null);
+
+  // Suggested questions chips for quick testing
+  const sampleQuestions = [
+    "How did you implement authentication in your projects?",
+    "How do you handle security and token blacklisting in Payment-Ledger-System?",
+    "What technologies do you use for backend development?",
+  ];
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -47,6 +54,14 @@ function App() {
           setUser(userData);
           fetchRepos(token);
           fetchImportedProjects(token);
+
+          // Initialize friendly AI Twin greeting
+          setChatMessages([
+            {
+              role: 'assistant',
+              text: `Hey there! I am ${userData.name || userData.username}'s AI Twin. I've indexed your GitHub code repositories with vector embeddings. Ask me technical questions about your code architecture, error handling, or database design!`,
+            },
+          ]);
         } else {
           localStorage.removeItem('devtwin_token');
         }
@@ -58,6 +73,11 @@ function App() {
 
     fetchUser();
   }, []);
+
+  // Auto-scroll chat to latest message
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, isChatting]);
 
   // Poll imported projects if any project is currently analyzing
   useEffect(() => {
@@ -163,35 +183,53 @@ function App() {
     setEmbeddingProjectId(null);
   };
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
+  const handleSendChatMessage = async (questionText) => {
+    const q = questionText || chatInput;
+    if (!q || !q.trim() || !user) return;
 
-    const token = localStorage.getItem('devtwin_token');
-    if (!token) return;
+    const userMsg = { role: 'user', text: q.trim() };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput('');
+    setIsChatting(true);
 
-    setIsSearching(true);
-    setHasSearched(true);
     try {
-      const response = await fetch('http://localhost:5000/api/repos/search', {
+      const response = await fetch(`http://localhost:5000/api/chat/${user.username}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ query: searchQuery }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q.trim() }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        setSearchResults(data.results || []);
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: data.answer,
+            sources: data.sources || [],
+          },
+        ]);
       } else {
-        alert('Search failed');
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: "Sorry, I ran into an error generating that response. Make sure the server is running and Gemini API key is configured.",
+          },
+        ]);
       }
     } catch (err) {
-      console.error('Search error:', err);
+      console.error('Chat error:', err);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: "Could not connect to the AI Twin server.",
+        },
+      ]);
     }
-    setIsSearching(false);
+
+    setIsChatting(false);
   };
 
   const handleLogin = () => {
@@ -204,8 +242,7 @@ function App() {
     setRepos([]);
     setSelectedRepos(new Set());
     setImportedProjects([]);
-    setSearchResults([]);
-    setHasSearched(false);
+    setChatMessages([]);
   };
 
   const toggleRepoSelection = (repoId) => {
@@ -227,12 +264,15 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white font-sans selection:bg-blue-500/30">
+    <div className="min-h-screen bg-gray-950 text-white font-sans selection:bg-blue-500/30">
       
       {/* Navbar */}
-      <nav className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-md sticky top-0 z-50">
+      <nav className="border-b border-gray-800 bg-gray-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-blue-400">DevTwin</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-blue-400">DevTwin</h1>
+            <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded font-mono">v1.0</span>
+          </div>
           {user && (
             <div className="flex items-center gap-4">
               <span className="text-sm text-gray-400">@{user.username}</span>
@@ -243,7 +283,7 @@ function App() {
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto px-4 py-12">
+      <main className="max-w-6xl mx-auto px-4 py-10">
         {!user ? (
           /* Logged Out View */
           <div className="text-center mt-20">
@@ -268,7 +308,7 @@ function App() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold text-white">AI Knowledge Base</h2>
-                    <p className="text-sm text-gray-400">These repositories are indexed with vector embeddings for instant semantic search.</p>
+                    <p className="text-sm text-gray-400">Your GitHub repositories indexed with vector embeddings for your AI Twin.</p>
                   </div>
                   <span className="text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-full font-semibold">
                     {importedProjects.filter(p => p.status === 'completed').length} / {importedProjects.length} Ready
@@ -277,7 +317,7 @@ function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {importedProjects.map((proj) => (
-                    <div key={proj._id} className="p-5 rounded-xl border border-gray-800 bg-gray-800/40 flex flex-col justify-between">
+                    <div key={proj._id} className="p-5 rounded-xl border border-gray-800 bg-gray-900/40 flex flex-col justify-between">
                       <div>
                         <div className="flex justify-between items-start mb-2">
                           <h3 className="font-semibold text-white truncate pr-2">{proj.name}</h3>
@@ -311,7 +351,6 @@ function App() {
                           <span>{proj.filesCount} files • <strong className="text-blue-400">{proj.chunksCount || 0} vectors</strong></span>
                         </div>
 
-                        {/* If vectors are 0 (e.g. from an earlier import), show a 1-click Vectorize button */}
                         {(!proj.chunksCount || proj.chunksCount === 0) && proj.status === 'completed' && (
                           <button
                             onClick={() => handleGenerateEmbeddings(proj._id)}
@@ -326,72 +365,133 @@ function App() {
                   ))}
                 </div>
 
-                {/* Section 1.5: Interactive Semantic Search Playground */}
-                <div className="p-6 rounded-2xl border border-gray-800 bg-gray-900/80 shadow-xl space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        <span>🔍</span> Test Semantic Code Search
-                      </h3>
-                      <p className="text-xs text-gray-400">
-                        Ask questions in plain English. Our AI uses Gemini vector embeddings and cosine similarity to find the exact code!
-                      </p>
+                {/* Section 2: The AI Twin Recruiter Chat Box */}
+                <div className="rounded-2xl border border-gray-800 bg-gray-900/60 shadow-2xl overflow-hidden">
+                  
+                  {/* Chat Header */}
+                  <div className="px-6 py-4 border-b border-gray-800 bg-gray-900/90 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <img 
+                          src={user.avatarUrl} 
+                          alt="AI Twin" 
+                          className="w-10 h-10 rounded-full border border-blue-500/40"
+                        />
+                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-gray-900 rounded-full"></span>
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-white flex items-center gap-2">
+                          <span>{user.name || user.username}'s AI Twin</span>
+                          <span className="text-xs font-normal bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full">
+                            RAG Powered
+                          </span>
+                        </h3>
+                        <p className="text-xs text-gray-400">Simulate a technical interview! Ask about architecture, security, or implementation details.</p>
+                      </div>
                     </div>
                   </div>
 
-                  <form onSubmit={handleSearch} className="flex gap-2">
+                  {/* Sample Question Chips */}
+                  <div className="px-6 py-3 bg-gray-950/40 border-b border-gray-800/60 flex flex-wrap gap-2 items-center">
+                    <span className="text-xs text-gray-500">Try asking:</span>
+                    {sampleQuestions.map((sq, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleSendChatMessage(sq)}
+                        disabled={isChatting}
+                        className="text-xs px-3 py-1 rounded-full bg-gray-800/60 hover:bg-blue-500/20 border border-gray-700/60 hover:border-blue-500/40 text-gray-300 hover:text-blue-300 transition-colors text-left"
+                      >
+                        💡 {sq}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Chat Messages Scroll Window */}
+                  <div className="p-6 space-y-4 max-h-[460px] overflow-y-auto">
+                    {chatMessages.map((msg, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        {msg.role === 'assistant' && (
+                          <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs flex-shrink-0">
+                            🤖
+                          </div>
+                        )}
+
+                        <div className={`max-w-2xl rounded-2xl p-4 text-sm leading-relaxed ${
+                          msg.role === 'user'
+                            ? 'bg-blue-600 text-white rounded-br-none'
+                            : 'bg-gray-800/80 text-gray-200 border border-gray-700/60 rounded-bl-none space-y-3'
+                        }`}>
+                          <div className="whitespace-pre-wrap">{msg.text}</div>
+
+                          {/* Sources Cited */}
+                          {msg.sources && msg.sources.length > 0 && (
+                            <div className="pt-2 border-t border-gray-700/60">
+                              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5 flex items-center gap-1">
+                                <span>📚</span> Verified from Repository Code:
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {msg.sources.map((s, si) => (
+                                  <span
+                                    key={si}
+                                    className="text-xs bg-gray-900 border border-gray-700 text-blue-300 px-2 py-0.5 rounded font-mono"
+                                  >
+                                    {s.filePath} ({s.projectName})
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {isChatting && (
+                      <div className="flex gap-3 justify-start items-center">
+                        <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs flex-shrink-0 animate-pulse">
+                          🤖
+                        </div>
+                        <div className="bg-gray-800/80 border border-gray-700/60 rounded-2xl rounded-bl-none px-4 py-3 text-xs text-gray-400 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping"></span>
+                          <span>Searching code embeddings & formulating answer...</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div ref={chatBottomRef} />
+                  </div>
+
+                  {/* Chat Input Bar */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendChatMessage();
+                    }}
+                    className="p-4 border-t border-gray-800 bg-gray-900/90 flex gap-2"
+                  >
                     <input
                       type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="e.g. Where do we connect to the database? or How does login work?"
-                      className="flex-1 bg-gray-800/80 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Ask Mohit's AI Twin anything about his projects or code..."
+                      disabled={isChatting}
+                      className="flex-1 bg-gray-950 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
                     />
                     <button
                       type="submit"
-                      disabled={isSearching || !searchQuery.trim()}
-                      className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-lg text-sm font-semibold transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] cursor-pointer"
+                      disabled={isChatting || !chatInput.trim()}
+                      className="px-6 py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] cursor-pointer"
                     >
-                      {isSearching ? 'Thinking...' : 'Search Code'}
+                      Ask Twin
                     </button>
                   </form>
-
-                  {/* Search Results Display */}
-                  {hasSearched && (
-                    <div className="space-y-3 pt-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        Found {searchResults.length} Relevant Code Blocks
-                      </h4>
-
-                      {searchResults.length === 0 ? (
-                        <p className="text-sm text-gray-500 italic">No matching code chunks found. Try generating embeddings on your projects first!</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {searchResults.map((res, idx) => (
-                            <div key={idx} className="p-4 rounded-xl border border-gray-800 bg-gray-950/70 space-y-2">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
-                                  📄 {res.filePath} ({res.projectName})
-                                </span>
-                                <span className="text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
-                                  {res.similarity} Match
-                                </span>
-                              </div>
-                              <pre className="p-3 bg-gray-900 rounded-lg text-xs font-mono text-gray-300 overflow-x-auto border border-gray-800 max-h-48">
-                                <code>{res.chunkContent}</code>
-                              </pre>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
-
               </div>
             )}
 
-            {/* Section 2: Repository Selection */}
+            {/* Section 3: Repository Selection */}
             <div>
               <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
                 <div>
