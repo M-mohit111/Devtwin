@@ -1,7 +1,9 @@
 import express from 'express';
 import { protect } from '../middleware/authMiddleware.js';
 import Project from '../models/Project.js';
-import { ingestRepository } from '../services/githubService.js';
+import CodeChunk from '../models/CodeChunk.js';
+import { ingestRepository, generateProjectEmbeddings } from '../services/githubService.js';
+import { getEmbedding, rankChunksBySimilarity } from '../services/geminiService.js';
 
 const router = express.Router();
 
@@ -110,6 +112,75 @@ router.post('/import', protect, async (req, res) => {
   } catch (error) {
     console.error('Error importing repositories:', error);
     res.status(500).json({ error: 'Failed to import repositories' });
+  }
+});
+
+// Route: POST /api/repos/:projectId/embed
+// Purpose: Manually generate vector embeddings for a previously imported project
+router.post('/:projectId/embed', protect, async (req, res) => {
+  try {
+    const project = await Project.findOne({ _id: req.params.projectId, user: req.user._id });
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const count = await generateProjectEmbeddings(project);
+    project.chunksCount = count;
+    await project.save();
+
+    res.status(200).json({ message: `Successfully generated ${count} vector embeddings`, chunksCount: count });
+  } catch (error) {
+    console.error('Embedding error:', error);
+    res.status(500).json({ error: 'Failed to generate embeddings' });
+  }
+});
+
+// Route: POST /api/repos/search
+// Purpose: Semantic code search using vector similarity
+router.post('/search', protect, async (req, res) => {
+  const { query, projectId } = req.body;
+
+  if (!query || typeof query !== 'string') {
+    return res.status(400).json({ error: 'Please provide a search query' });
+  }
+
+  try {
+    // Step 1: Turn user query into a vector
+    const queryVector = await getEmbedding(query);
+
+    // Step 2: Fetch all stored code chunks for this user (or specific project)
+    const filter = { user: req.user._id };
+    if (projectId) filter.project = projectId;
+
+    const chunks = await CodeChunk.find(filter).populate('project', 'name language');
+
+    if (chunks.length === 0) {
+      return res.status(200).json({
+        message: 'No embedded code chunks found. Try generating embeddings first!',
+        results: [],
+      });
+    }
+
+    // Step 3: Rank chunks using Cosine Similarity
+    const ranked = rankChunksBySimilarity(queryVector, chunks, 4);
+
+    // Step 4: Return clean response without huge embedding arrays
+    const cleanResults = ranked.map((r) => ({
+      projectId: r.project?._id,
+      projectName: r.project?.name,
+      filePath: r.filePath,
+      chunkContent: r.chunkContent,
+      similarity: (r.similarity * 100).toFixed(1) + '%',
+    }));
+
+    res.status(200).json({
+      query,
+      resultsCount: cleanResults.length,
+      results: cleanResults,
+    });
+  } catch (error) {
+    console.error('Semantic search error:', error);
+    res.status(500).json({ error: 'Semantic search failed' });
   }
 });
 

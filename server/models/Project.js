@@ -34,6 +34,10 @@ const projectSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    chunksCount: {
+      type: Number,
+      default: 0,
+    },
     readme: {
       type: String,
       default: '',

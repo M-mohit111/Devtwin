@@ -1,5 +1,8 @@
 import Project from '../models/Project.js';
 import CodeFile from '../models/CodeFile.js';
+import CodeChunk from '../models/CodeChunk.js';
+import { chunkCodeFile } from '../utils/chunker.js';
+import { getBatchEmbeddings } from './geminiService.js';
 
 // List of folders and files to strictly ignore
 const IGNORED_PATHS = [
@@ -124,16 +127,70 @@ export async function ingestRepository(user, project) {
       }
     }
 
-    // Step F: Mark project as completed!
+    // Step F: Generate Vector Embeddings for all saved code files
+    const chunksCount = await generateProjectEmbeddings(project);
+
+    // Step G: Mark project as completed!
     project.status = 'completed';
     project.filesCount = savedFilesCount;
+    project.chunksCount = chunksCount;
     project.readme = readmeText;
     await project.save();
 
-    console.log(`✅ Finished ingesting ${project.name}: ${savedFilesCount} files saved.`);
+    console.log(`✅ Finished ingesting & embedding ${project.name}: ${savedFilesCount} files, ${chunksCount} vector chunks saved.`);
   } catch (error) {
     console.error(`❌ Ingestion failed for ${project.name}:`, error.message);
     project.status = 'failed';
     await project.save();
+  }
+}
+
+/**
+ * Chunks all code files of a project and generates vector embeddings.
+ */
+export async function generateProjectEmbeddings(project) {
+  try {
+    const files = await CodeFile.find({ project: project._id });
+    if (!files || files.length === 0) return 0;
+
+    // Collect all chunks across all files
+    const allChunks = [];
+    for (const file of files) {
+      const fileChunks = chunkCodeFile(file.content, file.path);
+      for (const fc of fileChunks) {
+        allChunks.push({
+          project: project._id,
+          user: project.user,
+          filePath: file.path,
+          chunkContent: fc.chunkContent,
+          chunkIndex: fc.chunkIndex,
+        });
+      }
+    }
+
+    if (allChunks.length === 0) return 0;
+
+    console.log(`🧠 Generating vector embeddings for ${allChunks.length} chunks from ${project.name}...`);
+
+    // Extract raw text for embedding
+    const chunkTexts = allChunks.map((c) => c.chunkContent);
+    const embeddings = await getBatchEmbeddings(chunkTexts);
+
+    // Attach embedding vectors to chunk objects
+    for (let i = 0; i < allChunks.length; i++) {
+      allChunks[i].embedding = embeddings[i] || [];
+    }
+
+    // Clean old chunks for this project
+    await CodeChunk.deleteMany({ project: project._id });
+
+    // Bulk insert new chunks
+    await CodeChunk.insertMany(allChunks);
+
+    console.log(`✨ Successfully generated and stored ${allChunks.length} vector embeddings!`);
+    return allChunks.length;
+  } catch (err) {
+    console.error(`Error generating embeddings for ${project.name}:`, err.message);
+    return 0;
   }
 }

@@ -13,6 +13,13 @@ function App() {
   // State for imported projects
   const [importedProjects, setImportedProjects] = useState([]);
   const [isImporting, setIsImporting] = useState(false);
+  const [embeddingProjectId, setEmbeddingProjectId] = useState(null);
+
+  // State for Semantic Search Playground
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [hasSearched, setHasSearched] = useState(false);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -134,6 +141,59 @@ function App() {
     setIsImporting(false);
   };
 
+  const handleGenerateEmbeddings = async (projectId) => {
+    const token = localStorage.getItem('devtwin_token');
+    if (!token) return;
+
+    setEmbeddingProjectId(projectId);
+    try {
+      const response = await fetch(`http://localhost:5000/api/repos/${projectId}/embed`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.ok) {
+        fetchImportedProjects(token);
+      } else {
+        alert('Failed to generate embeddings. Check your Gemini API key in server/.env');
+      }
+    } catch (err) {
+      console.error('Embedding generation failed:', err);
+    }
+    setEmbeddingProjectId(null);
+  };
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    const token = localStorage.getItem('devtwin_token');
+    if (!token) return;
+
+    setIsSearching(true);
+    setHasSearched(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/repos/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ query: searchQuery }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSearchResults(data.results || []);
+      } else {
+        alert('Search failed');
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+    }
+    setIsSearching(false);
+  };
+
   const handleLogin = () => {
     window.location.href = 'http://localhost:5000/api/auth/github';
   };
@@ -144,6 +204,8 @@ function App() {
     setRepos([]);
     setSelectedRepos(new Set());
     setImportedProjects([]);
+    setSearchResults([]);
+    setHasSearched(false);
   };
 
   const toggleRepoSelection = (repoId) => {
@@ -202,11 +264,11 @@ function App() {
             
             {/* Section 1: AI Knowledge Base (Imported Projects) */}
             {importedProjects.length > 0 && (
-              <div>
-                <div className="flex items-center justify-between mb-4">
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-2xl font-bold text-white">AI Knowledge Base</h2>
-                    <p className="text-sm text-gray-400">These repositories are indexed and ready for recruiters to query.</p>
+                    <p className="text-sm text-gray-400">These repositories are indexed with vector embeddings for instant semantic search.</p>
                   </div>
                   <span className="text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-full font-semibold">
                     {importedProjects.filter(p => p.status === 'completed').length} / {importedProjects.length} Ready
@@ -243,13 +305,89 @@ function App() {
                         </p>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs text-gray-400 border-t border-gray-800/80 pt-3">
-                        <span>{proj.language || 'Code'}</span>
-                        <span>{proj.filesCount} source files indexed</span>
+                      <div className="border-t border-gray-800/80 pt-3 space-y-2">
+                        <div className="flex items-center justify-between text-xs text-gray-400">
+                          <span>{proj.language || 'Code'}</span>
+                          <span>{proj.filesCount} files • <strong className="text-blue-400">{proj.chunksCount || 0} vectors</strong></span>
+                        </div>
+
+                        {/* If vectors are 0 (e.g. from an earlier import), show a 1-click Vectorize button */}
+                        {(!proj.chunksCount || proj.chunksCount === 0) && proj.status === 'completed' && (
+                          <button
+                            onClick={() => handleGenerateEmbeddings(proj._id)}
+                            disabled={embeddingProjectId === proj._id}
+                            className="w-full text-xs py-1.5 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 rounded font-medium transition-colors"
+                          >
+                            {embeddingProjectId === proj._id ? 'Generating Vectors...' : '⚡ Generate AI Embeddings'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {/* Section 1.5: Interactive Semantic Search Playground */}
+                <div className="p-6 rounded-2xl border border-gray-800 bg-gray-900/80 shadow-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                        <span>🔍</span> Test Semantic Code Search
+                      </h3>
+                      <p className="text-xs text-gray-400">
+                        Ask questions in plain English. Our AI uses Gemini vector embeddings and cosine similarity to find the exact code!
+                      </p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleSearch} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="e.g. Where do we connect to the database? or How does login work?"
+                      className="flex-1 bg-gray-800/80 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSearching || !searchQuery.trim()}
+                      className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-800 disabled:text-gray-500 text-white rounded-lg text-sm font-semibold transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] cursor-pointer"
+                    >
+                      {isSearching ? 'Thinking...' : 'Search Code'}
+                    </button>
+                  </form>
+
+                  {/* Search Results Display */}
+                  {hasSearched && (
+                    <div className="space-y-3 pt-2">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                        Found {searchResults.length} Relevant Code Blocks
+                      </h4>
+
+                      {searchResults.length === 0 ? (
+                        <p className="text-sm text-gray-500 italic">No matching code chunks found. Try generating embeddings on your projects first!</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {searchResults.map((res, idx) => (
+                            <div key={idx} className="p-4 rounded-xl border border-gray-800 bg-gray-950/70 space-y-2">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
+                                  📄 {res.filePath} ({res.projectName})
+                                </span>
+                                <span className="text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-semibold">
+                                  {res.similarity} Match
+                                </span>
+                              </div>
+                              <pre className="p-3 bg-gray-900 rounded-lg text-xs font-mono text-gray-300 overflow-x-auto border border-gray-800 max-h-48">
+                                <code>{res.chunkContent}</code>
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
               </div>
             )}
 
